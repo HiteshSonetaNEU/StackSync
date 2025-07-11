@@ -21,7 +21,7 @@ A Flask-based API service that safely executes arbitrary Python code using nsjai
 
 2. **Clone and Build**:
    ```bash
-   git clone <your-repository-url>
+   git clone https://github.com/HiteshSonetaNEU/StackSync.git
    cd python-execution-api
    ```
 
