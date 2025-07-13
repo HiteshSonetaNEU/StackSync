@@ -48,7 +48,7 @@ def validate_script(script_content):
 
 def create_execution_script(user_script):
     """
-    Create a wrapper script that captures the main() function result
+    Create a wrapper script that captures the main() function result and validates JSON
     """
     wrapper_script = f'''
 import sys
@@ -71,26 +71,25 @@ if __name__ == "__main__":
         # Get captured output
         stdout_content = stdout_capture.getvalue()
         
-        # Ensure result is JSON serializable
-        if result is None:
-            result = None
+        # Validate that result is JSON serializable
+        try:
+            json.dumps(result)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"main() function must return JSON-serializable data, got: {{type(result).__name__}}")
         
         # Create response
         response = {{
             "result": result,
-            "stdout": stdout_content,
-            "error": None
+            "stdout": stdout_content
         }}
         
         print("__RESULT_START__" + json.dumps(response) + "__RESULT_END__")
         
     except Exception as e:
         error_response = {{
-            "result": None,
-            "stdout": "",
             "error": str(e)
         }}
-        print("__RESULT_START__" + json.dumps(error_response) + "__RESULT_END__")
+        print("__ERROR_START__" + json.dumps(error_response) + "__ERROR_END__")
         sys.exit(1)
 '''
     return wrapper_script
@@ -117,7 +116,7 @@ def execute_with_nsjail(script_content):
             'nsjail',
             '--config', NSJAIL_CONFIG_PATH,
             '--',
-            '/usr/bin/python3', nsjail_script_path  
+            '/usr/local/bin/python3', nsjail_script_path  
         ]
         
         
@@ -130,6 +129,21 @@ def execute_with_nsjail(script_content):
         
         
         output = process.stdout
+        
+        
+        if "__ERROR_START__" in output and "__ERROR_END__" in output:
+            start_marker = "__ERROR_START__"
+            end_marker = "__ERROR_END__"
+            start_idx = output.find(start_marker) + len(start_marker)
+            end_idx = output.find(end_marker)
+            error_json = output[start_idx:end_idx]
+            
+            try:
+                error_data = json.loads(error_json)
+                raise ValueError(error_data.get("error", "Script execution failed"))
+            except json.JSONDecodeError:
+                raise ValueError("Script execution failed with parsing error")
+        
         if "__RESULT_START__" in output and "__RESULT_END__" in output:
             start_marker = "__RESULT_START__"
             end_marker = "__RESULT_END__"
@@ -140,27 +154,19 @@ def execute_with_nsjail(script_content):
             try:
                 return json.loads(result_json)
             except json.JSONDecodeError:
-                pass
+                raise ValueError("Failed to parse execution result")
         
+        if process.stderr:
+            raise ValueError(f"Script execution error: {process.stderr}")
         
-        return {
-            "result": None,
-            "stdout": process.stdout,
-            "error": process.stderr if process.stderr else "Failed to parse execution result"
-        }
+        raise ValueError("Script execution failed - no result returned")
         
     except subprocess.TimeoutExpired:
-        return {
-            "result": None,
-            "stdout": "",
-            "error": f"Script execution timed out after {PYTHON_TIMEOUT} seconds"
-        }
+        raise ValueError(f"Script execution timed out after {PYTHON_TIMEOUT} seconds")
     except Exception as e:
-        return {
-            "result": None,
-            "stdout": "",
-            "error": f"Execution error: {str(e)}"
-        }
+        if isinstance(e, ValueError):
+            raise  # 
+        raise ValueError(f"Execution error: {str(e)}")
     finally:
         try:
             if 'script_path' in locals() and os.path.exists(script_path):
@@ -191,17 +197,15 @@ def execute_script():
         
         execution_script = create_execution_script(script_content)
         
-        result = execute_with_nsjail(execution_script)
-        
-        return jsonify(result)
+        try:
+            result = execute_with_nsjail(execution_script)
+            return jsonify(result)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        return jsonify({
-            "result": None,
-            "stdout": "",
-            "error": "Internal server error"
-        }), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route('/health', methods=['GET'])
