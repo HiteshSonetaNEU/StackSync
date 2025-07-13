@@ -21,6 +21,11 @@ A secure, containerized Python code execution service deployed on Google Cloud R
 ## 🌐 Deployed Service
 
 **Service URL**: `https://python-executor-317362064963.us-central1.run.app`
+2. **Clone and Build**:
+   ```bash
+   git clone https://github.com/HiteshSonetaNEU/StackSync.git
+   cd python-execution-api
+   ```
 
 ## 🧪 Testing with Google Cloud SDK
 
